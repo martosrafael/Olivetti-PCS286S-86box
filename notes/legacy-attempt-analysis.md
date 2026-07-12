@@ -76,3 +76,11 @@ Patch `0001-add-olivetti-pcs286s-machine.patch` intentionally includes only:
 
 It intentionally does not include the KBC/CMOS hacks. The next run should tell us whether upstream Olivetti KBC support is already enough, or whether commands `0x8A`, `0x8B`, `0x82` and `0xCF` need a proper implementation.
 
+Patch `0002-wip-olivetti-kbc-post-commands.patch` is the first controlled version of that KBC experiment. It:
+
+- handles Olivetti KBC commands `0x82`, `0x8A`, `0x8B`, and `0xCF`;
+- reports `0x8C` for the status-like commands seen in the legacy logs;
+- reports `0x55` for command `0xCF`;
+- keeps `SYSFLAG` and `UNLOCKED` visible in the Olivetti KBC status byte.
+
+Do not treat patch 2 as final hardware emulation yet. It is a testable hypothesis extracted from the old run logs.
