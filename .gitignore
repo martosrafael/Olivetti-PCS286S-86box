@@ -1,0 +1,10 @@
+dumps/original/*
+!dumps/original/README.md
+dumps/derived/*.bin
+dumps/derived/*.rom
+dumps/derived/*.fd
+dumps/derived/*.json
+dumps/derived/*.md
+!dumps/derived/README.md
+*.log
+*.tmp

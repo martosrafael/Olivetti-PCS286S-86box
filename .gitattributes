@@ -1,2 +1,10 @@
-# Auto detect text files and perform LF normalization
 * text=auto
+.gitattributes text eol=lf
+.gitignore text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bin binary
+*.rom binary
+*.fd binary
