@@ -1,17 +1,26 @@
-# Parche 86Box - pendiente
+# Parches 86Box
 
-Este directorio queda reservado para el parche real contra 86Box.
+Este directorio contiene parches candidatos contra 86Box.
 
-Antes de escribirlo necesitamos:
+## Parches
 
-1. Identificar la BIOS combinada correcta.
-2. Saber si el cuelgue ocurre antes o despues de inicializar video.
-3. Tener un log/traza de puertos o, como minimo, el ultimo texto/codigo POST.
+- `0001-add-olivetti-pcs286s-machine.patch`: alta minima de la maquina Olivetti PCS 286S contra 86Box actual.
 
-La primera version del parche deberia ser intencionadamente pequena:
+## Aplicacion local
 
-- declarar la maquina "Olivetti PCS 286S";
-- cargar `roms/machines/olivetti_pcs286s/bios.bin`;
-- reutilizar una inicializacion AT 286 existente;
-- activar trazas para descubrir que hardware especifico falta.
+Desde la raiz de un checkout de 86Box:
 
+```powershell
+git apply <ruta-a-este-repo>\patches\86box\0001-add-olivetti-pcs286s-machine.patch
+```
+
+Despues coloca los dumps locales, no versionados, en:
+
+```text
+roms/machines/olivetti_pcs286s/PCS286S_REL.1.06_LOW.BIN
+roms/machines/olivetti_pcs286s/PCS286S_REL.1.06_HIGH.BIN
+```
+
+## Siguiente investigacion
+
+La copia antigua que llegaba a arrancar apunta a un bucle de teclado/controlador 8042. Si el parche minimo se vuelve a quedar en el mismo punto, el siguiente parche debe centrarse en el KBC Olivetti, no en volver a tocar la carga de ROM.

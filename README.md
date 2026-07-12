@@ -18,6 +18,7 @@ notes/
   86box-integration.md
   bringup-plan.md
   hardware-notes.md
+  legacy-attempt-analysis.md
 patches/
   86box/           # notas para el futuro parche de 86Box
 tools/
