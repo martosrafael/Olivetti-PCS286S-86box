@@ -16,6 +16,7 @@ dumps/
   derived/         # aqui se generan BIOS combinadas e informes
 notes/
   86box-integration.md
+  bringup-plan.md
   hardware-notes.md
 patches/
   86box/           # notas para el futuro parche de 86Box
@@ -55,6 +56,13 @@ La segunda orden genera:
 - `candidate_manifest.json`
 
 El candidato bueno suele ser el que tiene bytes de reset coherentes en los ultimos 16 bytes del fichero. En muchas BIOS AT aparece un salto lejano (`EA xx xx xx F0`) cerca de la direccion fisica `FFFF0`, pero no conviene asumirlo hasta inspeccionar el dump real.
+
+Para sacar un resumen estatico util para el port a 86Box:
+
+```powershell
+tools\run_bios_tool.cmd candidates dumps\original\chip-uXX.bin dumps\original\chip-uYY.bin --out dumps\derived
+tools\run_rom_static_analysis.cmd dumps\derived\candidate_a_low_even.bin --out notes\bios-analysis.md
+```
 
 ## Objetivo tecnico
 
