@@ -81,3 +81,5 @@ The expected image is `dumps/derived/candidate_a_low_even.bin`.
 
 This is an independent preservation project and is not affiliated with Olivetti.
 See [PUBLISHING.md](PUBLISHING.md) for the upstream and release plan.
+Experiments with modified firmware should follow the
+[BIOS modification workflow](notes/bios-modification.md).
