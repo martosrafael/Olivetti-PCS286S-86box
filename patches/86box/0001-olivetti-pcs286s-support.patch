@@ -1,0 +1,390 @@
+diff --git a/src/device/kbc_at.c b/src/device/kbc_at.c
+index 80bd5a0c4..04f847288 100644
+--- a/src/device/kbc_at.c
++++ b/src/device/kbc_at.c
+@@ -238,10 +238,11 @@ kbc_at_queue_add(atkbc_t *dev, uint8_t val)
+ static int
+ kbc_translate(atkbc_t *dev, uint8_t val)
+ {
+-    int      xt_mode   = (dev->mem[0x20] & 0x20) && !(dev->misc_flags & FLAG_PS2);
++    uint8_t  kbc_ven   = dev->flags & KBC_VEN_MASK;
++    int      xt_mode   = (dev->mem[0x20] & 0x20) && !(dev->misc_flags & FLAG_PS2) &&
++                         (kbc_ven != KBC_VEN_OLIVETTI);
+     /* The IBM AT keyboard controller firmware does not apply translation in XT mode. */
+     int      translate = !xt_mode && ((dev->mem[0x20] & 0x40) || (dev->is_type2));
+-    uint8_t  kbc_ven   = dev->flags & KBC_VEN_MASK;
+     int      ret       = - 1;
+ 
+     /* Allow for scan code translation. */
+@@ -509,9 +510,18 @@ kbc_at_poll_at(atkbc_t *dev)
+ at_main_ibf:
+            if (dev->status & STAT_OFULL) {
+                 /* OBF set, wait until it is cleared but still process commands. */
+-                if ((dev->status & STAT_IFULL) && (dev->status & STAT_CD)) {
+-                    dev->status &= ~STAT_IFULL;
+-                    kbc_at_process_cmd(dev);
++                if (dev->status & STAT_IFULL) {
++                    if (dev->status & STAT_CD) {
++                        dev->status &= ~STAT_IFULL;
++                        kbc_at_process_cmd(dev);
++                    } else if ((dev->flags & KBC_VEN_MASK) == KBC_VEN_OLIVETTI) {
++                        /*
++                         * The PCS 286S sends a keyboard reset while an Olivetti
++                         * status byte is still in OBF. Its 8042 accepts that byte
++                         * without waiting for the host to drain OBF.
++                         */
++                        kbc_ibf_process(dev);
++                    }
+                 }
+             } else if (dev->status & STAT_IFULL)
+                 kbc_ibf_process(dev);
+@@ -1996,6 +2006,7 @@ write_cmd_olivetti(void *priv, uint8_t val)
+ {
+     atkbc_t *dev = (atkbc_t *) priv;
+     uint8_t  ret = 1;
++    uint8_t  status = (0x0c | (is386 ? 0x00 : 0x80)) & 0xdf;
+ 
+     switch (val) {
+         default:
+@@ -2009,10 +2020,27 @@ write_cmd_olivetti(void *priv, uint8_t val)
+              * bit 2: keyboard fuse present
+              * bits 0-1: ???
+              */
+-            kbc_delay_to_ob(dev, (0x0c | (is386 ? 0x00 : 0x80)) & 0xdf, 0, 0x00);
++            kbc_send_to_ob(dev, status, 0, 0x00);
+             dev->p1 = ((dev->p1 + 1) & 3) | (dev->p1 & 0xfc);
+             ret = 0;
+             break;
++
++        case 0x8a:
++        case 0x8b:
++            /* Seen during PCS 286S POST; appears to query the same status byte. */
++            kbc_send_to_ob(dev, status, 0, 0x00);
++            ret = 0;
++            break;
++
++        case 0x82:
++            /* Olivetti output command; the BIOS does not expect a reply. */
++            ret = 0;
++            break;
++
++        case 0xcf:
++            /* Prefix used before Olivetti status commands; it has no reply. */
++            ret = 0;
++            break;
+     }
+ 
+     return ret;
+@@ -2632,7 +2660,6 @@ kbc_at_port_1_write(uint16_t port, uint8_t val, void *priv)
+     uint8_t fast_a20 = (kbc_ven != KBC_VEN_SIEMENS);
+ 
+     kbc_at_log("ATkbc: [%04X:%08X] write(%04X) = %02X\n", CS, cpu_state.pc, port, val);
+-
+     dev->status &= ~STAT_CD;
+ 
+     if (fast_a20 && dev->wantdata && (dev->command == 0xd1)) {
+@@ -2664,7 +2691,6 @@ kbc_at_port_2_write(uint16_t port, uint8_t val, void *priv)
+     uint8_t fast_a20 = (kbc_ven != KBC_VEN_SIEMENS);
+ 
+     kbc_at_log("ATkbc: [%04X:%08X] write(%04X) = %02X\n", CS, cpu_state.pc, port, val);
+-
+     dev->status |= STAT_CD;
+ 
+     if (fast_a20 && (val == 0xd1)) {
+@@ -2743,7 +2769,6 @@ kbc_at_port_1_read(uint16_t port, void *priv)
+         cpu_override_dynarec = 0;
+ 
+     kbc_at_log("ATkbc: [%04X:%08X] read (%04X) = %02X\n",  CS, cpu_state.pc, port, ret);
+-
+     return ret;
+ }
+ 
+@@ -2758,8 +2783,10 @@ kbc_at_port_2_read(uint16_t port, void *priv)
+ 
+     ret = dev->status;
+ 
+-    kbc_at_log("ATkbc: [%04X:%08X] read (%04X) = %02X\n",  CS, cpu_state.pc, port, ret);
++    if ((dev->flags & KBC_VEN_MASK) == KBC_VEN_OLIVETTI)
++        ret |= (STAT_SYSFLAG | STAT_UNLOCKED);
+ 
++    kbc_at_log("ATkbc: [%04X:%08X] read (%04X) = %02X\n",  CS, cpu_state.pc, port, ret);
+     return ret;
+ }
+ 
+@@ -2813,6 +2840,11 @@ kbc_at_reset(void *priv)
+ 
+     /* Stage 1. */
+     dev->status = (dev->status & 0x0f) | (dev->p1 & 0xf0);
++
++    if ((dev->flags & KBC_VEN_MASK) == KBC_VEN_OLIVETTI) {
++        dev->status &= ~(STAT_PARITY | STAT_RTIMEOUT | STAT_TTIMEOUT | STAT_MFULL);
++        dev->status |= (STAT_SYSFLAG | STAT_UNLOCKED);
++    }
+ }
+ 
+ static void
+diff --git a/src/include/86box/machine.h b/src/include/86box/machine.h
+index e8b29f800..4059ff87c 100644
+--- a/src/include/86box/machine.h
++++ b/src/include/86box/machine.h
+@@ -503,6 +503,10 @@ extern const device_t  ibmat_device;
+ #endif
+ extern int             machine_at_ibmat_init(const machine_t *);
+ #ifdef EMU_DEVICE_H
++extern const device_t  olivetti_pcs286s_device;
++#endif
++extern int             machine_at_olivetti_pcs286s_init(const machine_t *);
++#ifdef EMU_DEVICE_H
+ extern const device_t  ibmxt286_device;
+ #endif
+ extern int             machine_at_ibmxt286_init(const machine_t *);
+diff --git a/src/machine/m_at_286.c b/src/machine/m_at_286.c
+index 291ff8e0c..8eceaab45 100644
+--- a/src/machine/m_at_286.c
++++ b/src/machine/m_at_286.c
+@@ -137,6 +137,123 @@ const device_t ibmat_device = {
+     .config        = ibmat_config
+ };
+ 
++static const device_config_t olivetti_pcs286s_config[] = {
++    // clang-format off
++    {
++        .name           = "bios",
++        .description    = "BIOS Version",
++        .type           = CONFIG_BIOS,
++        .default_string = "olivetti_pcs286s_106",
++        .default_int    = 0,
++        .file_filter    = NULL,
++        .spinner        = { 0 },
++        .selection      = { { 0 } },
++        .bios           = {
++            {
++                .name          = "Rel. 1.06",
++                .internal_name = "olivetti_pcs286s_106",
++                .bios_type     = BIOS_NORMAL,
++                .files_no      = 2,
++                .local         = 0,
++                .size          = 65536,
++                .files         = {
++                    "roms/machines/olivetti_pcs286s/PCS286S_REL.1.06_LOW.BIN",
++                    "roms/machines/olivetti_pcs286s/PCS286S_REL.1.06_HIGH.BIN",
++                    ""
++                }
++            },
++
++            { .files_no = 0 }
++        },
++    },
++    { .name = "", .description = "", .type = CONFIG_END }
++    // clang-format on
++};
++
++const device_t olivetti_pcs286s_device = {
++    .name          = "Olivetti PCS 286S",
++    .internal_name = "olivetti_pcs286s",
++    .flags         = 0,
++    .local         = 0,
++    .init          = NULL,
++    .close         = NULL,
++    .reset         = NULL,
++    .available     = NULL,
++    .speed_changed = NULL,
++    .force_redraw  = NULL,
++    .config        = olivetti_pcs286s_config
++};
++
++static void
++olivetti_pcs286s_sync_cmos(void)
++{
++    nvr_t   *nvr = (nvr_t *) device_get_priv(machine_get_nvr_device(machine));
++    uint32_t base_kb;
++    uint32_t extended_kb;
++    uint16_t memory_banks;
++    uint8_t  memory_profile;
++    uint8_t  equipment;
++    uint16_t checksum = 0;
++    int      changed  = 0;
++
++    if (nvr == NULL)
++        return;
++
++    base_kb     = nvr->regs[0x15] | (nvr->regs[0x16] << 8);
++    extended_kb = nvr->regs[0x30] | (nvr->regs[0x31] << 8);
++
++    if ((base_kb + extended_kb) != mem_size)
++        return;
++
++    if ((nvr->regs[0x17] != (extended_kb & 0xff)) ||
++        (nvr->regs[0x18] != (extended_kb >> 8))) {
++        nvr->regs[0x17] = extended_kb & 0xff;
++        nvr->regs[0x18] = extended_kb >> 8;
++        changed = 1;
++    }
++
++    /* Memory above the first 768 KB of extended RAM is encoded in 16 KB banks. */
++    memory_banks = (extended_kb > 768) ? ((extended_kb - 768) >> 4) : 0;
++    if ((nvr->regs[0x20] != (memory_banks & 0xff)) ||
++        (nvr->regs[0x21] != (memory_banks >> 8))) {
++        nvr->regs[0x20] = memory_banks & 0xff;
++        nvr->regs[0x21] = memory_banks >> 8;
++        changed = 1;
++    }
++
++    memory_profile = 0x80 | (mem_size >> 9);
++    if (nvr->regs[0x24] != memory_profile) {
++        nvr->regs[0x24] = memory_profile;
++        changed = 1;
++    }
++
++    if (nvr->regs[0x34] || nvr->regs[0x35]) {
++        nvr->regs[0x34] = nvr->regs[0x35] = 0;
++        changed = 1;
++    }
++
++    equipment = (hasfpu ? 0x02 : 0x00) |
++                ((fdd_get_type(0) || fdd_get_type(1)) ? 0x01 : 0x00);
++    if ((nvr->regs[0x14] & 0x03) != equipment) {
++        nvr->regs[0x14] = (nvr->regs[0x14] & ~0x03) | equipment;
++        changed = 1;
++    }
++
++    if (nvr->regs[0x0e] & 0x30) {
++        nvr->regs[0x0e] &= ~0x30;
++        changed = 1;
++    }
++
++    if (changed) {
++        for (uint8_t i = 0x10; i <= 0x2d; i++)
++            checksum += nvr->regs[i];
++
++        nvr->regs[0x2e] = checksum >> 8;
++        nvr->regs[0x2f] = checksum & 0xff;
++        nvr_dosave       = 1;
++    }
++}
++
+ static void
+ machine_at_ibm_common_init(const machine_t *model)
+ {
+@@ -984,6 +1101,35 @@ machine_at_scat_init(const machine_t *model, int is_v4, int is_ami)
+         device_add(&scat_device);
+ }
+ 
++int
++machine_at_olivetti_pcs286s_init(const machine_t *model)
++{
++    int         ret;
++    const char *fn[2];
++
++    if (!device_available(model->device))
++        return 0;
++
++    device_context(model->device);
++    fn[0] = device_get_bios_file(model->device, device_get_config_bios("bios"), 0);
++    fn[1] = device_get_bios_file(model->device, device_get_config_bios("bios"), 1);
++    ret   = bios_load_interleaved(fn[0], fn[1], 0x000e0000, 131072, 0);
++    device_context_restore();
++
++    if (bios_only || !ret)
++        return ret;
++
++    machine_at_common_init(model);
++    olivetti_pcs286s_sync_cmos();
++    device_add_params(machine_get_kbc_device(machine), (void *) model->kbc_params);
++    mem_remap_top(384);
++
++    device_add(&f82c710_device);
++    device_add(&ide_isa_device);
++
++    return ret;
++}
++
+ int
+ machine_at_pc5286_init(const machine_t *model)
+ {
+diff --git a/src/machine/machine_table.c b/src/machine/machine_table.c
+index 08f386e19..cb9dadb4e 100644
+--- a/src/machine/machine_table.c
++++ b/src/machine/machine_table.c
+@@ -4937,6 +4937,54 @@ const machine_t machines[] = {
+         .net_device               = NULL,
+         .aliases                  = { "Amstrad VSC286E", "" }
+     },
++    /* Uses Olivetti AT KBC firmware. */
++    {
++        .name              = "[ISA] Olivetti PCS 286S",
++        .internal_name     = "olivetti_pcs286s",
++        .type              = MACHINE_TYPE_286,
++        .chipset           = MACHINE_CHIPSET_DISCRETE,
++        .init              = machine_at_olivetti_pcs286s_init,
++        .p1_handler        = machine_generic_p1_handler,
++        .gpio_handler      = NULL,
++        .available_flag    = MACHINE_AVAILABLE,
++        .gpio_acpi_handler = NULL,
++        .cpu               = {
++            .package     = CPU_PKG_286,
++            .block       = CPU_BLOCK_NONE,
++            .min_bus     = 16000000,
++            .max_bus     = 16000000,
++            .min_voltage = 0,
++            .max_voltage = 0,
++            .min_multi   = 0,
++            .max_multi   = 0
++        },
++        .bus_flags = MACHINE_AT,
++        .flags     = MACHINE_IDE,
++        .ram       = {
++            .min  = 512,
++            .max  = 4096,
++            .step = 128
++        },
++        .nvrmask                  = 127,
++        .jumpered_ecp_dma         = 0,
++        .default_jumpered_ecp_dma = -1,
++        .kbc_device               = &kbc_at_device,
++        .kbc_params               = KBC_VEN_OLIVETTI,
++        .nvr_device               = &nvr_at_device,
++        .nvr_params               = NVR_AT,
++        .sio_device               = NULL,
++        .sio_params               = 0x00000000,
++        .kbc_p1                   = 0x000004f0,
++        .gpio                     = 0xffffffff,
++        .gpio_acpi                = 0xffffffff,
++        .device                   = &olivetti_pcs286s_device,
++        .kbd_device               = NULL,
++        .fdc_device               = NULL,
++        .vid_device               = NULL,
++        .snd_device               = NULL,
++        .net_device               = NULL,
++        .aliases                  = { "" }
++    },
+     /* Has unknown KBC firmware. */
+     {
+         .name              = "[SCAT] Amstrad PC5286",
+diff --git a/src/nvr_at.c b/src/nvr_at.c
+index a9b566cc2..14f9f0743 100644
+--- a/src/nvr_at.c
++++ b/src/nvr_at.c
+@@ -669,6 +669,11 @@ nvr_write(uint16_t addr, uint8_t val, void *priv)
+ 
+     cycles -= ISA_CYCLES(8);
+ 
++    /* The PCS 286S exposes register 7F as a read-only configuration-valid flag. */
++    if ((addr & 1) && (local->addr[addr_id] == 0x7f) &&
++        !strcmp(machine_get_internal_name(), "olivetti_pcs286s"))
++        return;
++
+     if (local->bank[addr_id] == 0xff)
+         return;
+ 
+@@ -721,6 +726,10 @@ nvr_read(uint16_t addr, void *priv)
+ 
+     cycles -= ISA_CYCLES(8);
+ 
++    if ((addr & 1) && (local->addr[addr_id] == 0x7f) &&
++        !strcmp(machine_get_internal_name(), "olivetti_pcs286s"))
++        return 0x00;
++
+     if (local->bank[addr_id] == 0xff)
+         ret = 0xff;
+     else if (addr & 1)

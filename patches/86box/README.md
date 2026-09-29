@@ -1,28 +1,20 @@
-# Parches 86Box
+# 86Box patch
 
-Este directorio contiene parches candidatos contra 86Box.
+`0001-olivetti-pcs286s-support.patch` is a snapshot of the tested implementation
+against 86Box commit `53fd57d980f9f6da7f0a23cdb6ce385171e92a41`.
 
-## Parches
-
-- `0001-add-olivetti-pcs286s-machine.patch`: alta minima de la maquina Olivetti PCS 286S contra 86Box actual.
-- `0002-wip-olivetti-kbc-post-commands.patch`: extension experimental del KBC Olivetti basada en los logs de la copia antigua.
-
-## Aplicacion local
-
-Desde la raiz de un checkout de 86Box:
+Apply from the root of a matching 86Box checkout:
 
 ```powershell
-git apply <ruta-a-este-repo>\patches\86box\0001-add-olivetti-pcs286s-machine.patch
-git apply <ruta-a-este-repo>\patches\86box\0002-wip-olivetti-kbc-post-commands.patch
+git apply path\to\0001-olivetti-pcs286s-support.patch
 ```
 
-Despues coloca los dumps locales, no versionados, en:
+Place the two local firmware dumps at:
 
 ```text
 roms/machines/olivetti_pcs286s/PCS286S_REL.1.06_LOW.BIN
 roms/machines/olivetti_pcs286s/PCS286S_REL.1.06_HIGH.BIN
 ```
 
-## Siguiente investigacion
-
-La copia antigua que llegaba a arrancar apunta a un bucle de teclado/controlador 8042. Si el parche minimo se vuelve a quedar en el mismo punto, aplica el parche WIP del KBC y compara el ultimo patron de E/S.
+The patch contains no ROM bytes. It is intended as a reproducible preservation
+snapshot and will need rebasing and normal upstream review before submission.
